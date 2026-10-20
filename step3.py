@@ -289,19 +289,49 @@ class Step3Processor:
         print("=" * 60)
 
         prompt = self.load_prompt()
+        # 通用规则始终发送；金额专项规则仅在当前批次涉及金额字段时发送。
+        prompt_parts = prompt.split("\n[金额专项规则]\n", 1)
+        general_prompt = prompt_parts[0]
+        amount_rules = prompt_parts[1].split("\n## JSON输出", 1)[0].strip() if len(prompt_parts) > 1 else ""
         bid_data = load_json(self.bid_json_path)
         contract_data = load_json(self.contract_json_path)
         if not isinstance(bid_data, dict) or not isinstance(contract_data, dict):
             raise ValueError("招标文件和合同文件提取结果必须是 JSON 对象。")
 
         field_names = list(dict.fromkeys([*bid_data.keys(), *contract_data.keys()]))
-        batch_size = 4
-        batches = [field_names[i:i + batch_size] for i in range(0, len(field_names), batch_size)]
+
+        # 按字段实际文本长度动态分批：短字段可多批处理，长字段自动缩小批次。
+        # 同时限制字段数，避免单批过多导致输出截断。
+        target_data_chars = 6000
+        max_fields_per_batch = 8
+        batches = []
+        current_batch = []
+        current_chars = 0
+        for field in field_names:
+            field_payload = json.dumps(
+                {"信息1": bid_data.get(field), "信息2": contract_data.get(field)},
+                ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            )
+            field_chars = len(field_payload)
+            if current_batch and (
+                current_chars + field_chars > target_data_chars
+                or len(current_batch) >= max_fields_per_batch
+            ):
+                batches.append(current_batch)
+                current_batch = []
+                current_chars = 0
+            current_batch.append(field)
+            current_chars += field_chars
+        if current_batch:
+            batches.append(current_batch)
         if not batches:
             batches = [[]]
 
         print(f"招标字段数：{len(bid_data)}；合同字段数：{len(contract_data)}")
-        print(f"比较批次数：{len(batches)}；每批最多 {batch_size} 个字段")
+        print(
+            f"比较批次数：{len(batches)}；动态分批目标：每批数据约 {target_data_chars} 字符，"
+            f"最多 {max_fields_per_batch} 个字段"
+        )
         all_issues = []
         compare_provider = dict(self.provider)
         # 比较阶段关闭深度推理，避免 reasoning 占满输出 token 配额。
@@ -314,8 +344,12 @@ class Step3Processor:
             else:
                 bid_subset, contract_subset = bid_data, contract_data
 
+            batch_prompt = general_prompt
+            amount_keywords = ("金额", "价款", "报价", "限价", "费率", "下浮率", "保证金", "设计费", "建安工程费", "暂列")
+            if amount_rules and any(any(word in str(name) for word in amount_keywords) for name in fields):
+                batch_prompt += "\n\n金额专项规则：\n" + amount_rules
             request_prompt = self.build_request_prompt(
-                prompt,
+                batch_prompt,
                 json.dumps(bid_subset, ensure_ascii=False, indent=2, allow_nan=False),
                 json.dumps(contract_subset, ensure_ascii=False, indent=2, allow_nan=False)
             )
