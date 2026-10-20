@@ -9,7 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import grounding as g
 
 SOURCE = "第五条 价款\n5.1 合同价款为人民币 1200 万元，\n工期270日历天。\n第六条 保修\n保修期为二年。"
-TEMPLATE = "规则……\n合同原文如下：\n{{CONTRACT_TEXT}}"
+
+def make_template(fields):
+    schema = ",\n".join(f'"{name}": {{"value": null, "evidence": []}}' for name in fields)
+    return "规则……\n输出格式：\n{\n" + schema + "\n}\n合同原文如下：\n{{CONTRACT_TEXT}}"
+
+
+ALL_FIELDS = ("合同金额", "施工工期", "保修期")
 
 
 class FakeGateway:
@@ -21,9 +27,9 @@ class FakeGateway:
         return json.dumps(self.replies[min(len(self.prompts) - 1, len(self.replies) - 1)], ensure_ascii=False)
 
 
-def run(replies, source=SOURCE, **kw):
+def run(replies, source=SOURCE, fields=ALL_FIELDS, **kw):
     gw = FakeGateway(replies)
-    clean, grounded = g.extract_fields(gw, {}, TEMPLATE, source, parse=json.loads, log=lambda m: None, **kw)
+    clean, grounded = g.extract_fields(gw, {}, make_template(fields), source, parse=json.loads, log=lambda m: None, **kw)
     return gw, clean, grounded
 
 
@@ -73,28 +79,40 @@ class Extract(unittest.TestCase):
         self.assertEqual(grounded["fields"]["保修期"]["grounding"], "empty")
         self.assertEqual(grounded["summary"], {"verified": 2, "empty": 1})
 
+    def test_fields_are_requested_in_batches_of_four(self):
+        names = tuple(f"字段{i}" for i in range(9))
+        reply_for = lambda ns: {n: {"value": None, "evidence": []} for n in ns}
+        gw, clean, _ = run([reply_for(names[0:4]), reply_for(names[4:8]), reply_for(names[8:])], fields=names)
+        self.assertEqual(len(gw.prompts), 3)
+        self.assertEqual(list(clean), list(names))
+
+    def test_missing_field_in_ai_reply_stops_the_run(self):
+        with self.assertRaisesRegex(RuntimeError, "缺少本批次必需字段"):
+            run([{"合同金额": {"value": None, "evidence": []}}])
+
     def test_invented_value_is_flagged_retried_and_kept_marked(self):
-        bad = {"合同金额": {"value": "人民币1500万元", "evidence": ["合同价款为人民币1500万元"]}}
-        gw, clean, grounded = run([bad, bad])
+        bad = {**self.GOOD, "合同金额": {"value": "人民币1500万元", "evidence": ["合同价款为人民币1500万元"]}}
+        retry = {"合同金额": bad["合同金额"]}
+        gw, clean, grounded = run([bad, retry])
         self.assertEqual(len(gw.prompts), 2)                     # 补抽了一轮
         self.assertIn("没能在原文中逐字找到：合同金额", gw.prompts[1])
         self.assertEqual(grounded["fields"]["合同金额"]["grounding"], "unverified")
         self.assertEqual(clean["合同金额"]["value"], "人民币1500万元")  # 不静默丢弃
 
     def test_retry_fixes_the_field(self):
-        bad = {"合同金额": {"value": "人民币1500万元", "evidence": ["合同价款为人民币1500万元"]}}
-        gw, clean, grounded = run([bad, self.GOOD])
+        bad = {**self.GOOD, "合同金额": {"value": "人民币1500万元", "evidence": ["合同价款为人民币1500万元"]}}
+        gw, clean, grounded = run([bad, {"合同金额": self.GOOD["合同金额"]}])
         self.assertEqual(grounded["fields"]["合同金额"]["grounding"], "verified")
         self.assertEqual(clean["合同金额"]["value"], "5.1：人民币1200万元")
 
     def test_missing_evidence_and_legacy_format(self):
-        gw, clean, grounded = run([{"施工工期": {"value": "270日历天"}}], extra_passes=0)
+        gw, clean, grounded = run([{"施工工期": {"value": "270日历天"}}], fields=("施工工期",), extra_passes=0)
         self.assertEqual(grounded["fields"]["施工工期"]["grounding"], "no_evidence")
         self.assertEqual(len(gw.prompts), 1)
 
     def test_number_not_in_source_downgrades_to_partial(self):
         reply = {"施工工期": {"value": "300日历天", "evidence": ["工期270日历天"]}}
-        _, _, grounded = run([reply], extra_passes=0)
+        _, _, grounded = run([reply], fields=("施工工期",), extra_passes=0)
         field = grounded["fields"]["施工工期"]
         self.assertEqual(field["grounding"], "partial")
         self.assertTrue(any("300" in w for w in field["warnings"]))
@@ -104,7 +122,7 @@ class Extract(unittest.TestCase):
         source = "\n".join(lines)
         replies = [{"保修期": {"value": None, "evidence": []}}] * 3 + [
             {"保修期": {"value": "二年", "evidence": ["保修期为二年"]}}]
-        gw, clean, grounded = run(replies, source=source, max_chars=200, overlap=40, extra_passes=0)
+        gw, clean, grounded = run(replies, source=source, fields=("保修期",), max_chars=200, overlap=40, extra_passes=0)
         self.assertGreater(grounded["chunks"], 1)
         self.assertEqual(len(gw.prompts), grounded["chunks"])
         self.assertIn("第 1/", gw.prompts[0])

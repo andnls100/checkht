@@ -711,6 +711,53 @@ def extract_contract_section(text):
     return section
 
 
+DEFAULT_MAX_TOKENS = 24000
+
+
+def extract_last_json_object(text):
+    """从一段文字里取出最后一个能解析、且字段不少于 3 个的 JSON 对象；没有则返回 None。"""
+
+    if not text:
+        return None
+
+    text = str(text)
+    best = None
+    depth = 0
+    start = None
+    in_string = False
+    escaped = False
+
+    for pos, ch in enumerate(text):
+
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = pos
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start is not None:
+                piece = text[start:pos + 1]
+                try:
+                    obj = json.loads(piece)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and len(obj) >= 3:
+                    best = piece
+
+    return best
+
+
 class AIGateway:
 
     def __init__(
@@ -1160,13 +1207,13 @@ class AIGateway:
 
         max_tokens = provider.get(
             "max_tokens",
-            8192
+            DEFAULT_MAX_TOKENS
         )
 
         try:
             max_tokens = int(max_tokens)
         except Exception:
-            max_tokens = 8192
+            max_tokens = DEFAULT_MAX_TOKENS
 
         temperature = provider.get(
             "temperature",
@@ -1223,6 +1270,22 @@ class AIGateway:
             payload[
                 "max_completion_tokens"
             ] = max_tokens
+
+        # 推理型模型要在这里关闭思考，例如：
+        #   智谱  "extra_body": {"thinking": {"type": "disabled"}}
+        #   Qwen  "extra_body": {"enable_thinking": false}
+        extra_body = provider.get(
+            "extra_body"
+        )
+
+        if isinstance(
+            extra_body,
+            dict
+        ):
+
+            payload.update(
+                extra_body
+            )
 
         headers = {
             "Authorization":
@@ -1649,584 +1712,73 @@ class AIGateway:
         print("=" * 80)
 
         # ========================================================
-        # content为空
+        # content为空 / 输出被截断
+        #
+        # 推理型模型会把 max_tokens 先花在思考上：
+        # 思考没结束就被截断时 content 为空，思考文字在 reasoning_content。
         # ========================================================
 
-        if content is None:
+        finish_reason = choice.get(
+            "finish_reason"
+        )
+
+        reasoning = (
+            message.get("reasoning_content")
+            or message.get("reasoning")
+        )
+
+        if reasoning:
+
+            print(
+                f"reasoning_content 长度："
+                f"{len(str(reasoning))}（思考过程，不作为答案）"
+            )
+
+        empty = (
+            content is None
+            or not str(content).strip()
+        )
+
+        if empty:
+
+            salvaged = extract_last_json_object(
+                reasoning
+            )
+
+            if salvaged:
+
+                print(
+                    "content 为空，已从 reasoning_content "
+                    "中提取到完整 JSON。"
+                )
+
+                return salvaged
+
+        if finish_reason == "length":
 
             raise RuntimeError(
-                "AI返回content=None。\n\n"
+                "AI输出被截断（finish_reason=length）："
+                f"max_tokens={max_tokens} 已用完"
+                + ("，content 为空，额度被思考过程耗尽。" if empty else "，JSON 不完整。")
+                + "\n请：1) 在 provider 里用 extra_body 关闭思考；"
+                "2) 调大 max_tokens；3) 减少一次抽取的字段数。"
+            )
+
+        if empty:
+
+            raise RuntimeError(
+                "AI返回content为空。\n\n"
+                f"finish_reason：{finish_reason}\n\n"
                 "完整响应：\n"
                 + json.dumps(
                     data,
                     ensure_ascii=False,
                     indent=2
-                )
+                )[:20000]
             )
 
         content = str(
             content
-        )
-
-        if not content.strip():
-
-            raise RuntimeError(
-                "AI返回content为空字符串。\n\n"
-                "完整响应：\n"
-                + json.dumps(
-                    data,
-                    ensure_ascii=False,
-                    indent=2
-                )
-            )
-
-        return content
-
-        provider_name = str(
-            provider.get(
-                "name",
-                "unknown"
-            )
-        ).strip()
-
-        model = provider.get(
-            "model"
-        )
-
-        if not model:
-
-            raise RuntimeError(
-                "Provider缺少model"
-            )
-
-        model = str(
-            model
-        ).strip()
-
-        api_key = self.get_api_key(
-            provider
-        )
-
-        url = self.build_chat_url(
-            provider
-        )
-
-        # ====================================================
-        # timeout
-        # ====================================================
-
-        timeout = provider.get(
-            "timeout",
-            DEFAULT_TIMEOUT
-        )
-
-        try:
-
-            timeout = int(
-                timeout
-            )
-
-        except Exception:
-
-            timeout = DEFAULT_TIMEOUT
-
-        # ====================================================
-        # max_tokens
-        #
-        # 不给太大的默认输出。
-        #
-        # 合同分析通常几千token已经足够。
-        # ====================================================
-
-        max_tokens = provider.get(
-            "max_tokens",
-            8192
-        )
-
-        try:
-
-            max_tokens = int(
-                max_tokens
-            )
-
-        except Exception:
-
-            max_tokens = 8192
-
-        # ====================================================
-        # temperature
-        # ====================================================
-
-        temperature = provider.get(
-            "temperature",
-            0.1
-        )
-
-        try:
-
-            temperature = float(
-                temperature
-            )
-
-        except Exception:
-
-            temperature = 0.1
-
-        # ====================================================
-        # messages
-        # ====================================================
-
-        messages = []
-
-        if system_prompt:
-
-            messages.append({
-                "role": "system",
-                "content": system_prompt
-            })
-
-        messages.append({
-            "role": "user",
-            "content": prompt
-        })
-
-        # ====================================================
-        # 请求JSON
-        # ====================================================
-
-        payload = {
-
-            "model": model,
-
-            "messages": messages,
-
-            "temperature": temperature,
-
-            "max_tokens": max_tokens
-        }
-
-        # ----------------------------------------------------
-        # 某些Provider支持max_completion_tokens
-        # ----------------------------------------------------
-
-        if provider.get(
-            "use_max_completion_tokens",
-            False
-        ):
-
-            payload.pop(
-                "max_tokens",
-                None
-            )
-
-            payload[
-                "max_completion_tokens"
-            ] = max_tokens
-
-        headers = {
-
-            "Authorization":
-                f"Bearer {api_key}",
-
-            "Content-Type":
-                "application/json",
-
-            "Accept":
-                "application/json",
-
-            "User-Agent":
-                "contract-ai/1.0"
-        }
-
-        # ====================================================
-        # 调试信息
-        # ====================================================
-
-        print()
-        print(
-            "-" * 70
-        )
-
-        print(
-            f"Provider     : {provider_name}"
-        )
-
-        print(
-            f"Model        : {model}"
-        )
-
-        print(
-            f"URL          : {url}"
-        )
-
-        print(
-            f"Prompt chars  : {len(prompt)}"
-        )
-
-        print(
-            f"Max tokens   : {max_tokens}"
-        )
-
-        print(
-            f"Timeout      : {timeout}s"
-        )
-
-        print(
-            f"Retry        : {retry_index + 1}"
-        )
-
-        print(
-            "-" * 70
-        )
-
-        # ====================================================
-        # HTTP请求
-        # ====================================================
-
-        start_time = time.time()
-
-        try:
-
-            response = requests.post(
-
-                url,
-
-                headers=headers,
-
-                json=payload,
-
-                timeout=(
-                    30,
-                    timeout
-                )
-            )
-
-        except requests.exceptions.Timeout as e:
-
-            elapsed = time.time() - start_time
-
-            raise RuntimeError(
-                "AI请求超时。\n\n"
-                f"URL：{url}\n"
-                f"连接/读取超时：{timeout}秒\n"
-                f"耗时：{elapsed:.1f}秒\n"
-                f"错误：{e}"
-            )
-
-        except requests.exceptions.ConnectionError as e:
-
-            elapsed = time.time() - start_time
-
-            raise RuntimeError(
-                "AI服务器连接失败。\n\n"
-                f"URL：{url}\n"
-                f"耗时：{elapsed:.1f}秒\n\n"
-                f"错误：{e}"
-            )
-
-        except requests.exceptions.SSLError as e:
-
-            raise RuntimeError(
-                "HTTPS/SSL连接失败。\n\n"
-                f"URL：{url}\n\n"
-                f"错误：{e}"
-            )
-
-        except requests.exceptions.RequestException as e:
-
-            raise RuntimeError(
-                "HTTP请求异常。\n\n"
-                f"URL：{url}\n\n"
-                f"错误类型：{type(e).__name__}\n"
-                f"错误：{e}"
-            )
-
-        elapsed = (
-            time.time()
-            - start_time
-        )
-
-        # ====================================================
-        # HTTP状态
-        # ====================================================
-
-        print(
-            f"HTTP Status : {response.status_code}"
-        )
-
-        print(
-            f"Elapsed     : {elapsed:.1f}s"
-        )
-
-        # ====================================================
-        # 尝试解析JSON
-        # ====================================================
-
-        data = None
-
-        try:
-
-            data = response.json()
-
-        except Exception:
-
-            data = None
-
-        request_id = self.get_request_id(
-            response,
-            data
-        )
-
-        if request_id:
-
-            print(
-                f"Request ID  : {request_id}"
-            )
-
-        # ====================================================
-        # HTTP失败
-        # ====================================================
-
-        if not response.ok:
-
-            response_text = (
-                self.get_response_text(
-                    response
-                )
-            )
-
-            print()
-            print(
-                "========== AI服务器错误 =========="
-            )
-
-            print(
-                response_text
-            )
-
-            print(
-                "===================================="
-            )
-
-            # ------------------------------------------------
-            # 400
-            # ------------------------------------------------
-
-            if response.status_code == 400:
-
-                raise RuntimeError(
-                    "HTTP 400 Bad Request。\n\n"
-                    "这通常表示：\n"
-                    "1. model名称错误\n"
-                    "2. 请求参数不兼容\n"
-                    "3. 当前模型不支持某个参数\n"
-                    "4. 请求格式错误\n"
-                    "5. Provider的API地址错误\n\n"
-                    f"URL：{url}\n"
-                    f"Model：{model}\n"
-                    f"服务器返回：\n"
-                    f"{response_text}"
-                )
-
-            # ------------------------------------------------
-            # 401
-            # ------------------------------------------------
-
-            if response.status_code == 401:
-
-                raise RuntimeError(
-                    "HTTP 401 Unauthorized。\n\n"
-                    "API Key认证失败。\n\n"
-                    f"Provider：{provider_name}\n"
-                    f"Model：{model}\n"
-                    f"URL：{url}\n\n"
-                    f"服务器返回：\n"
-                    f"{response_text}"
-                )
-
-            # ------------------------------------------------
-            # 403
-            # ------------------------------------------------
-
-            if response.status_code == 403:
-
-                raise RuntimeError(
-                    "HTTP 403 Forbidden。\n\n"
-                    "API Key没有该模型/接口权限。\n\n"
-                    f"Provider：{provider_name}\n"
-                    f"Model：{model}\n\n"
-                    f"服务器返回：\n"
-                    f"{response_text}"
-                )
-
-            # ------------------------------------------------
-            # 404
-            # ------------------------------------------------
-
-            if response.status_code == 404:
-
-                raise RuntimeError(
-                    "HTTP 404 Not Found。\n\n"
-                    "API地址不存在。\n\n"
-                    f"URL：{url}\n"
-                    f"Model：{model}\n\n"
-                    f"服务器返回：\n"
-                    f"{response_text}"
-                )
-
-            # ------------------------------------------------
-            # 429
-            # ------------------------------------------------
-
-            if response.status_code == 429:
-
-                raise RuntimeError(
-                    "HTTP 429 Too Many Requests。\n\n"
-                    "可能是：\n"
-                    "1. RPM超限\n"
-                    "2. TPM超限\n"
-                    "3. 余额/额度不足\n"
-                    "4. 并发限制\n\n"
-                    f"服务器返回：\n"
-                    f"{response_text}"
-                )
-
-            # ------------------------------------------------
-            # 5xx
-            # ------------------------------------------------
-
-            if response.status_code >= 500:
-
-                raise RuntimeError(
-                    f"AI服务器错误：HTTP "
-                    f"{response.status_code}\n\n"
-                    f"服务器返回：\n"
-                    f"{response_text}"
-                )
-
-            raise RuntimeError(
-                f"HTTP {response.status_code}\n\n"
-                f"服务器返回：\n"
-                f"{response_text}"
-            )
-
-        # ====================================================
-        # 成功JSON
-        # ====================================================
-
-        if data is None:
-
-            raise RuntimeError(
-                "HTTP 200，但是服务器返回的不是JSON。\n\n"
-                + self.get_response_text(
-                    response
-                )
-            )
-
-        # ====================================================
-        # 打印usage
-        # ====================================================
-
-        usage = data.get(
-            "usage"
-        )
-
-        if isinstance(
-            usage,
-            dict
-        ):
-
-            prompt_tokens = usage.get(
-                "prompt_tokens"
-            )
-
-            completion_tokens = usage.get(
-                "completion_tokens"
-            )
-
-            total_tokens = usage.get(
-                "total_tokens"
-            )
-
-            print()
-            print(
-                "Token Usage"
-            )
-
-            print(
-                f"  prompt     : "
-                f"{prompt_tokens}"
-            )
-
-            print(
-                f"  completion : "
-                f"{completion_tokens}"
-            )
-
-            print(
-                f"  total      : "
-                f"{total_tokens}"
-            )
-
-        # ====================================================
-        # choices
-        # ====================================================
-
-        try:
-
-            choices = data[
-                "choices"
-            ]
-
-            if not choices:
-
-                raise RuntimeError(
-                    "choices为空"
-                )
-
-            message = choices[0][
-                "message"
-            ]
-
-            content = message.get(
-                "content"
-            )
-
-        except Exception as e:
-
-            raise RuntimeError(
-                "AI返回格式异常。\n\n"
-                f"解析错误：{e}\n\n"
-                + json.dumps(
-                    data,
-                    ensure_ascii=False,
-                    indent=2
-                )[:20000]
-            )
-
-        if content is None:
-
-            raise RuntimeError(
-                "AI返回成功，但是content为空。\n\n"
-                + json.dumps(
-                    data,
-                    ensure_ascii=False,
-                    indent=2
-                )[:20000]
-            )
-
-        if not isinstance(
-            content,
-            str
-        ):
-
-            content = str(
-                content
-            )
-
-        print()
-        print(
-            f"AI返回：{len(content)} 字符"
         )
 
         return content
@@ -2303,7 +1855,9 @@ class AIGateway:
 
                     "model不存在",
 
-                    "模型不存在"
+                    "模型不存在",
+
+                    "AI输出被截断"
                 ]
 
                 is_fatal = any(

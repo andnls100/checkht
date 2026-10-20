@@ -13,6 +13,8 @@
 
             "timeout": 180,
             "max_retry": 1,
+            "max_tokens": 24000,
+            "extra_body": {"thinking": {"type": "disabled"}},
 
             "api_keys": [
                 {
@@ -32,6 +34,7 @@
 
             "timeout": 180,
             "max_retry": 3,
+            "max_tokens": 24000,
 
             "api_keys": [
                 {
