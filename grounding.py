@@ -14,6 +14,7 @@
 """
 
 import difflib
+import json
 import os
 import re
 import unicodedata
@@ -204,15 +205,79 @@ def build_prompt(template, chunk, number=1, total=1, only_fields=None):
     return head + template + "\n\n以下是正式合同原文：\n\n" + chunk
 
 
+def _find_output_schema(template):
+    """从提示词中定位字段输出模板，返回字段名及其在原文中的字符范围。"""
+    decoder = json.JSONDecoder()
+    candidates = []
+    for start, char in enumerate(template):
+        if char != "{":
+            continue
+        try:
+            obj, end = decoder.raw_decode(template[start:])
+        except (ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(obj, dict) and obj and all(
+            isinstance(value, dict) and "value" in value and "evidence" in value
+            for value in obj.values()
+        ):
+            candidates.append((len(obj), start, start + end, obj))
+    if not candidates:
+        raise RuntimeError("提示词中找不到包含 value/evidence 的 JSON 字段模板，无法安全分批")
+    _, start, end, schema = max(candidates, key=lambda item: item[0])
+    return list(schema.keys()), start, end, schema
+
+
+def _template_for_fields(template, fields):
+    """将提示词的输出模板缩小到当前批次，避免模型仍被要求输出全部字段。"""
+    _, start, end, schema = _find_output_schema(template)
+    subset = {name: schema[name] for name in fields if name in schema}
+    if not subset:
+        raise RuntimeError("当前批次没有匹配到提示词字段")
+    schema_text = json.dumps(subset, ensure_ascii=False, indent=2)
+    restricted = template[:start] + schema_text + template[end:]
+    note = (
+        "\n\n【本批次强制要求】本次只处理并输出以下字段，其他字段不得输出："
+        + "、".join(subset)
+        + "。JSON 顶层只能包含上述字段，且每个字段都必须包含 value 和 evidence。"
+    )
+    marker = "{{CONTRACT_TEXT}}"
+    if marker in restricted:
+        restricted = restricted.replace(marker, marker + note, 1)
+    else:
+        restricted += note
+    return restricted
+
+
 def _run_pass(gateway, provider, template, chunks, parse, log, only_fields=None):
+    all_fields, _, _, _ = _find_output_schema(template)
+    selected = [name for name in (only_fields or all_fields) if name in all_fields]
+    if not selected:
+        raise RuntimeError("没有可供 AI 提取的字段")
+    batch_size = max(1, int(os.environ.get("CHECKHT_FIELD_BATCH_SIZE", "4")))
+    batches = [selected[i:i + batch_size] for i in range(0, len(selected), batch_size)]
     results = []
     for i, chunk in enumerate(chunks, 1):
-        prompt = build_prompt(template, chunk, i, len(chunks), only_fields)
-        log(f"请求 AI：第 {i}/{len(chunks)} 段，Prompt {len(prompt)} 字符")
-        ai_text = gateway.request_with_retry(provider, prompt)
-        if not ai_text or not str(ai_text).strip():
-            raise RuntimeError("AI 没有返回内容")
-        results.append(_fields(parse(ai_text)))
+        for batch_no, fields in enumerate(batches, 1):
+            batch_template = _template_for_fields(template, fields)
+            prompt = build_prompt(batch_template, chunk, i, len(chunks), fields if only_fields else None)
+            log(
+                f"请求 AI：第 {i}/{len(chunks)} 段，字段批次 {batch_no}/{len(batches)}，"
+                f"字段 {len(fields)} 个，Prompt {len(prompt)} 字符"
+            )
+            ai_text = gateway.request_with_retry(provider, prompt)
+            if not ai_text or not str(ai_text).strip():
+                raise RuntimeError(
+                    f"AI 没有返回内容（第 {i}/{len(chunks)} 段，字段：{'、'.join(fields)}）"
+                )
+            parsed = _fields(parse(ai_text))
+            missing = [name for name in fields if name not in parsed]
+            if missing:
+                raise RuntimeError("AI JSON 缺少本批次必需字段：" + "、".join(missing))
+            unexpected = [name for name in parsed if name not in fields]
+            if unexpected:
+                log("AI 返回了批次外字段，将忽略：" + "、".join(unexpected))
+                parsed = {name: value for name, value in parsed.items() if name in fields}
+            results.append(parsed)
     return _merge(results)
 
 
@@ -227,7 +292,11 @@ def extract_fields(gateway, provider, template, source_text, parse=None, log=pri
         from contract_ai import parse_ai_json as parse
     chunks = split_chunks(source_text, max_chars or CHUNK_CHARS, CHUNK_OVERLAP if overlap is None else overlap)
     index = SourceIndex(source_text)
+    expected_fields, _, _, _ = _find_output_schema(template)
     fields = _run_pass(gateway, provider, template, chunks, parse, log)
+    missing_fields = [name for name in expected_fields if name not in fields]
+    if missing_fields:
+        raise RuntimeError("AI 抽取结果缺少必需字段，已停止保存：" + "、".join(missing_fields))
     reports = {name: verify_field(value, ev, index) for name, (value, ev) in fields.items()}
 
     passes = EXTRA_PASSES if extra_passes is None else extra_passes
