@@ -20,7 +20,7 @@ def install(gateway):
         api_key = gateway.get_api_key(provider)
         url = gateway.build_chat_url(provider)
         timeout = int(provider.get("timeout", 180))
-        max_tokens = max(16384, int(provider.get("max_tokens", 16384)))
+        max_tokens = max(20000, int(provider.get("max_tokens", 20000)))
         reasoning_effort = provider.get("reasoning_effort", "low")
 
         messages = []
