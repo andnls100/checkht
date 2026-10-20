@@ -89,21 +89,19 @@ def install(gateway):
         print(f"Content chars : {len(str(content or ''))}")
         print(f"Reasoning chars: {len(str(reasoning or ''))}")
 
-        if finish_reason == "length" and not str(content or "").strip():
+        # reasoning_content 仅用于排查日志，绝不作为业务提取结果。
+        if finish_reason == "length":
             raise RuntimeError(
-                "AI输出被max_tokens截断：finish_reason=length，content为空。"
-                "当前已使用 reasoning_effort=low、max_tokens>=16384。"
+                "AI输出被max_tokens截断：finish_reason=length。"
+                f"content字符数={len(str(content or ''))}；"
+                "请缩小字段批次后重试。"
             )
 
         if content is not None and str(content).strip():
             return str(content)
 
-        if reasoning and str(reasoning).strip() and ("{" in reasoning or "[" in reasoning):
-            print("AI content为空，尝试从reasoning_content提取JSON")
-            return str(reasoning)
-
         raise RuntimeError(
-            "AI返回成功，但content为空；reasoning_content中也没有可解析的JSON。"
+            "AI返回成功，但最终 content 为空；reasoning_content 仅用于日志排查。"
         )
 
     gateway.request_sync = request_sync
