@@ -291,8 +291,14 @@ class Step3Processor:
         prompt = self.load_prompt()
         # 通用规则始终发送；金额专项规则仅在当前批次涉及金额字段时发送。
         prompt_parts = prompt.split("\n[金额专项规则]\n", 1)
-        general_prompt = prompt_parts[0]
-        amount_rules = prompt_parts[1].split("\n## JSON输出", 1)[0].strip() if len(prompt_parts) > 1 else ""
+        if len(prompt_parts) > 1:
+            amount_and_output = prompt_parts[1].split("\n## JSON输出", 1)
+            amount_rules = amount_and_output[0].strip()
+            output_rules = amount_and_output[1].strip() if len(amount_and_output) > 1 else ""
+            general_prompt = prompt_parts[0].rstrip() + "\n\n## JSON输出\n" + output_rules
+        else:
+            general_prompt = prompt
+            amount_rules = ""
         bid_data = load_json(self.bid_json_path)
         contract_data = load_json(self.contract_json_path)
         if not isinstance(bid_data, dict) or not isinstance(contract_data, dict):
