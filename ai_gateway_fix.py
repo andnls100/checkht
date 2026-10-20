@@ -22,6 +22,8 @@ def install(gateway):
         timeout = int(provider.get("timeout", 180))
         max_tokens = 20000
         reasoning_effort = provider.get("reasoning_effort", "low")
+        if reasoning_effort not in ("low", "high", "max"):
+            reasoning_effort = "low"
 
         messages = []
         if system_prompt:
@@ -33,7 +35,7 @@ def install(gateway):
             "messages": messages,
             "temperature": float(provider.get("temperature", 0.1)),
             "max_tokens": max_tokens,
-            "thinking": {"type": "enabled" if provider.get("thinking_enabled", True) else "disabled"},
+            "thinking": {"type": "enabled"},
             "reasoning_effort": reasoning_effort,
         }
         if provider.get("use_max_completion_tokens", False):
