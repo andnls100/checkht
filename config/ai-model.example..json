@@ -1,0 +1,85 @@
+{
+    "providers": [
+	
+      
+		{
+            "name": "zhipu",
+            "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+            "model": "glm-5.3-flash",
+
+            "capabilities": [
+                "text"
+            ],
+
+            "timeout": 180,
+            "max_retry": 1,
+
+            "api_keys": [
+                {
+                    "name": "zhipu_01",
+                    "api_key": "我的 api_key"
+                } 
+            ]
+        },
+		  {
+            "name": "deepseek-flash",
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-flash",
+
+            "capabilities": [
+                "text"
+            ],
+
+            "timeout": 180,
+            "max_retry": 3,
+
+            "api_keys": [
+                {
+                    "name": "deepseek-flash",
+                    "api_key": "我的 api_key"
+                }
+            ]
+        },
+
+{
+            "name": "gemini",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "model": "gemini-3.7-flash",
+
+            "capabilities": [
+                "text"
+            ],
+
+            "timeout": 180,
+            "max_retry": 3,
+
+            "api_keys": [
+                {
+                    "name": "provider_01",
+                    "api_key": "我的 api_key"
+                }
+            ]
+        },
+		
+		{
+            "name": "qwen3.8-max",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "model": "qwen3.8-max",
+
+            "capabilities": [
+                "text"
+            ],
+
+            "timeout": 180,
+            "max_retry": 3,
+
+            "api_keys": [
+                {
+                    "name": "provider_01",
+                    "api_key": "我的 api_key"
+                }
+            ]
+        }
+
+    ]
+}
