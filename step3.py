@@ -353,6 +353,12 @@ class Step3Processor:
                 seen.add(key)
                 deduplicated.append(item)
 
+        # 任一方缺少有效值时，原因和字段解释统一简写，避免冗长描述。
+        for item in deduplicated:
+            if item.get("判断结果") in {"信息1缺少信息", "信息2缺少信息"}:
+                item["原因"] = ["无法比较。"]
+                item["字段解释"] = "无法比较。"
+
         result = {"问题总数": len(deduplicated), "问题列表": deduplicated}
         result = self.validate_result(json.dumps(result, ensure_ascii=False))
 
