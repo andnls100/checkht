@@ -20,7 +20,7 @@ def install(gateway):
         api_key = gateway.get_api_key(provider)
         url = gateway.build_chat_url(provider)
         timeout = int(provider.get("timeout", 180))
-        max_tokens = max(20000, int(provider.get("max_tokens", 20000)))
+        max_tokens = 20000
         reasoning_effort = provider.get("reasoning_effort", "low")
 
         messages = []
@@ -33,7 +33,7 @@ def install(gateway):
             "messages": messages,
             "temperature": float(provider.get("temperature", 0.1)),
             "max_tokens": max_tokens,
-            "thinking": {"type": "enabled"},
+            "thinking": {"type": "enabled" if provider.get("thinking_enabled", True) else "disabled"},
             "reasoning_effort": reasoning_effort,
         }
         if provider.get("use_max_completion_tokens", False):
