@@ -5,13 +5,14 @@
 1. 仅依据输入的合同原文，不使用外部知识，不猜测、不推断、不补全、不评价。
 2. 只输出一个完整、合法、可解析的 JSON 对象，不输出 Markdown、说明文字或思考过程。
 3. 必须严格输出下方规定的20个字段，字段名称、层级和顺序不得改变，不得增加字段。
-4. 每个字段必须使用 `{"value": ...}` 结构，`value` 只能是字符串或 `null`。
+4. 每个字段必须使用 `{"value": ..., "evidence": [...]}` 结构，`value` 只能是字符串或 `null`，`evidence` 见规则11。
 5. 原文没有明确记载、无法确定或仅能推测的信息，一律填 `null`。
 6. 同一字段存在多个明确约定时，可以合并到一个字符串中，但必须保留各自的条款编号、合同名称或角色名称，避免混淆。不得擅自解决条款冲突。
 7. 保留原文中的金额、比例、数字、日期、期限、单位和条件，不进行换算或推算。
 8. 合同签订日期不等于项目开始日期；工期不能直接换算成完成日期；项目总投资不等于合同金额。
 9. 不得将其他历史项目的名称、金额、人员或约定误认成本合同信息。
 10. 不要为了填满字段而提取无关内容。严格按照下述字段定义判断。
+11. 每个字段除 value 外必须再给出 evidence：字符串数组，每项是支撑该 value 的合同原文片段，必须逐字复制（不得改写、缩写、合并、补标点、换算数字），单项不超过150字。value 中出现的每一个金额、数字、日期、期限、条款编号，都必须能在 evidence 里逐字找到。value 为 null 时 evidence 填 []。
 
 ## 二、20个字段的提取规则
 
@@ -135,26 +136,30 @@
 严格输出以下JSON结构，20个字段必须全部出现。所有 `value` 只能是字符串或 `null`。没有明确事实时使用 `null`，不得使用空对象、数组或额外字段。
 
 {
-"价格形式": {"value": null},
-"施工工期": {"value": null},
-"设计工期": {"value": null},
-"服务期限": {"value": null},
-"付款方式": {"value": null},
-"预付款比例": {"value": null},
-"可调整的材料范围": {"value": null},
-"可调整的波动幅度": {"value": null},
-"保修期": {"value": null},
-"缺陷责任期": {"value": null},
-"甲方": {"value": null},
-"乙方": {"value": null},
-"项目负责人": {"value": null},
-"技术负责人": {"value": null},
-"合同金额": {"value": null},
-"开始日期": {"value": null},
-"完成日期": {"value": null},
-"履约保证金金额": {"value": null},
-"敏感词": {"value": null}
+"价格形式": {"value": null, "evidence": []},
+"施工工期": {"value": null, "evidence": []},
+"设计工期": {"value": null, "evidence": []},
+"服务期限": {"value": null, "evidence": []},
+"付款方式": {"value": null, "evidence": []},
+"预付款比例": {"value": null, "evidence": []},
+"可调整的材料范围": {"value": null, "evidence": []},
+"可调整的波动幅度": {"value": null, "evidence": []},
+"保修期": {"value": null, "evidence": []},
+"缺陷责任期": {"value": null, "evidence": []},
+"甲方": {"value": null, "evidence": []},
+"乙方": {"value": null, "evidence": []},
+"项目负责人": {"value": null, "evidence": []},
+"技术负责人": {"value": null, "evidence": []},
+"合同金额": {"value": null, "evidence": []},
+"开始日期": {"value": null, "evidence": []},
+"完成日期": {"value": null, "evidence": []},
+"履约保证金金额": {"value": null, "evidence": []},
+"敏感词": {"value": null, "evidence": []}
 }
+
+evidence 示例（虚构）：
+原文片段：“第5.1条 合同价款为人民币1200万元，工期270日历天。”
+输出：{"合同金额": {"value": "第5.1条：人民币1200万元", "evidence": ["合同价款为人民币1200万元"]}, "施工工期": {"value": "第5.1条：270日历天", "evidence": ["工期270日历天"]}, "保修期": {"value": null, "evidence": []}}
 
 ## 四、执行要求
 

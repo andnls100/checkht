@@ -27,6 +27,8 @@ AI返回JSON
 
 from pathlib import Path
 
+from grounding import extract_fields, print_summary
+
 from contract_ai import (
     BASE_DIR,
     OUTPUT_DIR,
@@ -147,154 +149,31 @@ class Step1Processor:
         )
 
         # ====================================================
-        # 5. 将合同文本注入Prompt
+        # 5-7. 分块（长文）→ AI 抽取 → 原文定位 → 补抽
         #
-        # extract_bid.txt 中必须存在：
-        #
-        # {{CONTRACT_TEXT}}
-        #
+        # 每个字段带 evidence（逐字摘自原文），程序在原文里
+        # 找到它的位置；找不到的字段标记 unverified 并补抽一轮。
+        # extract_bid.txt 里的 {{CONTRACT_TEXT}} 由 grounding 注入。
         # ====================================================
 
         print()
-        print("[5/8] 正在构造AI Prompt...")
-
-        if "{{CONTRACT_TEXT}}" not in prompt_template:
-
-            raise RuntimeError(
-                "extract_bid.txt 中没有找到 "
-                "{{CONTRACT_TEXT}} 占位符。"
-            )
-
-        prompt = prompt_template.replace(
-            "{{CONTRACT_TEXT}}",
-            contract_text
-        )
-
-        print(
-            f"Prompt模板长度："
-            f"{len(prompt_template)} 字符"
-        )
-
-        print(
-            f"合同文本长度："
-            f"{len(contract_text)} 字符"
-        )
-
-        print(
-            f"总Prompt长度："
-            f"{len(prompt)} 字符"
-        )
-
-        # ====================================================
-        # 6. AI
-        # ====================================================
-
-        print()
-        print("[6/8] 完整合同条款一次性发送AI")
+        print("[5-7/8] AI抽取 + 原文定位...")
 
         print(
             f"AI：{self.provider}"
         )
 
-        print(
-            f"Prompt长度：{len(prompt)} 字符"
-        )
-
-        print(
-            "正在请求AI，请稍候..."
-        )
-
-        ai_text = self.gateway.request_with_retry(
+        result, grounded = extract_fields(
+            self.gateway,
             self.provider,
-            prompt
+            prompt_template,
+            contract_text,
+            parse=parse_ai_json
         )
 
-        # ====================================================
-        # 6.1 AI返回结果检查
-        # ====================================================
-
-        print()
-        print("=" * 70)
-        print("AI原始返回检查")
-        print("=" * 70)
-
-        if ai_text is None:
-
-            print(
-                "AI返回：None"
-            )
-
-            raise RuntimeError(
-                "AI返回内容为 None。"
-                "请检查AI Gateway响应解析。"
-            )
-
-        print(
-            f"AI返回类型：{type(ai_text).__name__}"
+        print_summary(
+            grounded
         )
-
-        print(
-            f"AI返回长度：{len(ai_text)} 字符"
-        )
-
-        print()
-        print("AI返回内容：")
-
-        # repr可以看出空字符串、换行等隐藏字符
-        print(
-            repr(ai_text)
-        )
-
-        print("=" * 70)
-
-        # ====================================================
-        # 6.2 空返回直接报错
-        # ====================================================
-
-        if not str(ai_text).strip():
-
-            raise RuntimeError(
-                "AI返回内容为空。"
-                "\n"
-                "当前问题不是JSON解析问题，"
-                "而是AI Gateway没有取得有效的模型输出。"
-                "\n"
-                "请检查 request_with_retry() 的响应解析。"
-            )
-
-        # ====================================================
-        # 7. AI结果 → JSON
-        # ====================================================
-
-        print()
-        print("[7/8] 正在解析AI JSON...")
-
-        try:
-
-            result = parse_ai_json(
-                ai_text
-            )
-
-        except Exception as e:
-
-            print()
-            print("=" * 70)
-            print("JSON解析失败")
-            print("=" * 70)
-
-            print(
-                f"错误：{e}"
-            )
-
-            print()
-            print("AI原始返回：")
-            print(
-                repr(ai_text)
-            )
-
-            print("=" * 70)
-
-            raise
 
         # ====================================================
         # 8. 保存JSON
@@ -311,6 +190,20 @@ class Step1Processor:
         save_json(
             output_json,
             result
+        )
+
+        grounded_json = (
+            OUTPUT_DIR
+            / "bid_result.grounded.json"
+        )
+
+        save_json(
+            grounded_json,
+            grounded
+        )
+
+        print(
+            f"原文定位结果：{grounded_json}"
         )
 
         # ====================================================

@@ -9,26 +9,31 @@
 5. 保留原文中的金额、数字、比例、日期、期限和条件。
 6. 同一事项存在多个约定时，全部保留，不自行判断。
 7. 只能输出合法 JSON，不得输出 Markdown、解释、注释或其他文字。
-8. 只能输出以下字段，不得增加、删除或修改字段名称。
+8. 只能输出以下字段，不得增加、删除或修改字段名称；每个字段内只允许 value 和 evidence 两个键。
+9. 每个字段除 value 外必须再给出 evidence：字符串数组，每项是支撑该 value 的合同原文片段，必须逐字复制（不得改写、缩写、合并、补标点、换算数字），单项不超过150字。value 中出现的每一个金额、数字、日期、期限、条款编号，都必须能在 evidence 里逐字找到。value 为 null 时 evidence 填 []。
 
 输出格式：
 
 {
-"价格形式": {"value": null},
-"施工工期": {"value": null},
-"设计工期": {"value": null},
-"服务期限": {"value": null},
-"付款方式": {"value": null},
-"预付款比例": {"value": null},
-"可调整的材料范围": {"value": null},
-"可调整的波动幅度": {"value": null},
-"保修期": {"value": null},
-"缺陷责任期": {"value": null},
-"项目负责人": {"value": null},
-"技术负责人": {"value": null},
-"合同金额": {"value": null},
-"履约保证金金额": {"value": null}
+"价格形式": {"value": null, "evidence": []},
+"施工工期": {"value": null, "evidence": []},
+"设计工期": {"value": null, "evidence": []},
+"服务期限": {"value": null, "evidence": []},
+"付款方式": {"value": null, "evidence": []},
+"预付款比例": {"value": null, "evidence": []},
+"可调整的材料范围": {"value": null, "evidence": []},
+"可调整的波动幅度": {"value": null, "evidence": []},
+"保修期": {"value": null, "evidence": []},
+"缺陷责任期": {"value": null, "evidence": []},
+"项目负责人": {"value": null, "evidence": []},
+"技术负责人": {"value": null, "evidence": []},
+"合同金额": {"value": null, "evidence": []},
+"履约保证金金额": {"value": null, "evidence": []}
 }
+
+evidence 示例（虚构）：
+原文片段：“第5.1条 合同价款为人民币1200万元，工期270日历天。”
+输出：{"合同金额": {"value": "第5.1条：人民币1200万元", "evidence": ["合同价款为人民币1200万元"]}, "施工工期": {"value": "第5.1条：270日历天", "evidence": ["工期270日历天"]}, "保修期": {"value": null, "evidence": []}}
 
 提取要求：
 

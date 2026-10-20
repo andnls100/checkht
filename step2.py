@@ -25,6 +25,8 @@ output/contract_result.json
 
 from pathlib import Path
 
+from grounding import extract_fields, print_summary
+
 from contract_ai import (
     BASE_DIR,
     OUTPUT_DIR,
@@ -250,111 +252,41 @@ class Step2Processor:
         )
 
         # ====================================================
-        # 4. Prompt + 完整合同文本
-        # ====================================================
-
-        prompt = (
-            prompt_template
-            + "\n\n"
-            + "以下是正式合同原文："
-            + "\n\n"
-            + contract_text
-        )
-
-        print()
-        print(
-            "完整合同一次性发送 AI"
-        )
-
-        print(
-            f"Prompt 总长度："
-            f"{len(prompt)} 字符"
-        )
-
-        # ====================================================
-        # 5. AI
+        # 4-6. 分块（长文）→ AI 抽取 → 原文定位 → 补抽
+        #
+        # 每个字段带 evidence（逐字摘自原文），程序在原文里
+        # 找到它的位置；找不到的字段标记 unverified 并补抽一轮。
+        # extract_contract.txt 里的 {{CONTRACT_TEXT}} 由 grounding 注入。
         # ====================================================
 
         print()
         print(
-            "正在调用 AI..."
-        )
-
-        ai_text = self.gateway.request_with_retry(
-            self.provider,
-            prompt
-        )
-
-        if not ai_text:
-
-            raise ValueError(
-                "AI 没有返回内容"
-            )
-
-        print()
-        print(
-            f"AI 返回长度："
-            f"{len(ai_text)} 字符"
-        )
-
-        # ====================================================
-        # 6. AI结果 → JSON
-        # ====================================================
-
-        print()
-        print(
-            "正在解析 AI JSON..."
+            "正在调用 AI（抽取 + 原文定位）..."
         )
 
         try:
 
-            result = parse_ai_json(
-                ai_text
+            result, grounded = extract_fields(
+                self.gateway,
+                self.provider,
+                prompt_template,
+                contract_text,
+                parse=parse_ai_json
             )
 
         except Exception as e:
 
             print()
             print("=" * 70)
-            print("AI 返回内容无法解析为 JSON")
+            print("AI 抽取失败")
             print("=" * 70)
-
-            print()
-            print(
-                f"错误：{e}"
-            )
-
-            print()
-            print("AI 原始返回：")
-            print("-" * 70)
-
-            print(
-                ai_text
-            )
-
-            print("-" * 70)
-
-            # ------------------------------------------------
-            # 保存原始 AI 返回
-            # ------------------------------------------------
-
-            raw_output = (
-                OUTPUT_DIR
-                / "contract_ai_raw.txt"
-            )
-
-            write_text_file(
-                raw_output,
-                ai_text
-            )
-
-            print()
-            print(
-                f"AI 原始结果已保存："
-                f"{raw_output}"
-            )
+            print(f"错误：{e}")
 
             raise
+
+        print_summary(
+            grounded
+        )
 
         # ====================================================
         # 7. 保存 JSON
@@ -368,6 +300,20 @@ class Step2Processor:
         save_json(
             output_json,
             result
+        )
+
+        grounded_json = (
+            OUTPUT_DIR
+            / "contract_result.grounded.json"
+        )
+
+        save_json(
+            grounded_json,
+            grounded
+        )
+
+        print(
+            f"原文定位结果：{grounded_json}"
         )
 
         # ====================================================
