@@ -303,6 +303,9 @@ class Step3Processor:
         print(f"招标字段数：{len(bid_data)}；合同字段数：{len(contract_data)}")
         print(f"比较批次数：{len(batches)}；每批最多 {batch_size} 个字段")
         all_issues = []
+        compare_provider = dict(self.provider)
+        # 比较阶段关闭深度推理，避免 reasoning 占满输出 token 配额。
+        compare_provider["thinking_enabled"] = False
 
         def compare_batch(fields, batch_no, depth=0):
             if fields:
@@ -318,7 +321,7 @@ class Step3Processor:
             )
             print(f"正在审核第 {batch_no} 批，字段数：{len(fields) if fields else len(field_names)}")
             try:
-                response = self.gateway.request_sync(self.provider, request_prompt)
+                response = self.gateway.request_sync(compare_provider, request_prompt)
                 response_text = self.extract_response_text(response)
                 if not response_text:
                     raise RuntimeError("AI 返回 content 为空")
