@@ -26,6 +26,7 @@ output/contract_result.json
 from pathlib import Path
 
 from grounding import extract_fields, print_summary
+from ai_gateway_fix import install as install_gateway_fix
 
 from contract_ai import (
     BASE_DIR,
@@ -41,7 +42,8 @@ from contract_ai import (
 class Step2Processor:
 
     def __init__(self, gateway, provider):
-        self.gateway = gateway
+        # 正式合同抽取也启用兼容层，确保 GLM-5.3 请求使用 max_tokens=20000。
+        self.gateway = install_gateway_fix(gateway)
         self.provider = provider
 
     # ========================================================
