@@ -23,13 +23,15 @@ import json
 from pathlib import Path
 
 from contract_ai import OUTPUT_DIR, load_json
+from ai_gateway_fix import install as install_gateway_fix
 
 
 class Step3Processor:
     """合同一致性审核处理器。"""
 
     def __init__(self, gateway, provider):
-        self.gateway = gateway
+        # compare 阶段也使用兼容层：统一 max_tokens，并识别空内容/截断。
+        self.gateway = install_gateway_fix(gateway)
         self.provider = provider
 
         self.output_dir = Path(OUTPUT_DIR)
@@ -281,56 +283,81 @@ class Step3Processor:
         return result
 
     def run(self):
-        """执行合同一致性审核。"""
-
+        """分批执行合同一致性审核；单批截断或空响应时递归缩小批次。"""
         print("=" * 60)
         print("STEP 3：合同一致性审核")
         print("=" * 60)
 
         prompt = self.load_prompt()
+        bid_data = load_json(self.bid_json_path)
+        contract_data = load_json(self.contract_json_path)
+        if not isinstance(bid_data, dict) or not isinstance(contract_data, dict):
+            raise ValueError("招标文件和合同文件提取结果必须是 JSON 对象。")
 
-        bid_json = self.read_json_file(
-            self.bid_json_path
-        )
+        field_names = list(dict.fromkeys([*bid_data.keys(), *contract_data.keys()]))
+        batch_size = 4
+        batches = [field_names[i:i + batch_size] for i in range(0, len(field_names), batch_size)]
+        if not batches:
+            batches = [[]]
 
-        contract_json = self.read_json_file(
-            self.contract_json_path
-        )
+        print(f"招标字段数：{len(bid_data)}；合同字段数：{len(contract_data)}")
+        print(f"比较批次数：{len(batches)}；每批最多 {batch_size} 个字段")
+        all_issues = []
 
-        request_prompt = self.build_request_prompt(
-            prompt,
-            bid_json,
-            contract_json
-        )
+        def compare_batch(fields, batch_no, depth=0):
+            if fields:
+                bid_subset = {k: bid_data[k] for k in fields if k in bid_data}
+                contract_subset = {k: contract_data[k] for k in fields if k in contract_data}
+            else:
+                bid_subset, contract_subset = bid_data, contract_data
 
-        print("正在调用 AI 进行合同一致性审核...")
+            request_prompt = self.build_request_prompt(
+                prompt,
+                json.dumps(bid_subset, ensure_ascii=False, indent=2, allow_nan=False),
+                json.dumps(contract_subset, ensure_ascii=False, indent=2, allow_nan=False)
+            )
+            print(f"正在审核第 {batch_no} 批，字段数：{len(fields) if fields else len(field_names)}")
+            try:
+                response = self.gateway.request_sync(self.provider, request_prompt)
+                response_text = self.extract_response_text(response)
+                if not response_text:
+                    raise RuntimeError("AI 返回 content 为空")
+                result = self.validate_result(response_text)
+                return result["问题列表"]
+            except Exception as exc:
+                retryable = any(token in str(exc).lower() for token in (
+                    "finish_reason=length", "被maxtokens截断", "content 为空",
+                    "不是合法 json", "不是合法json", "jsondecodeerror"
+                ))
+                if retryable and len(fields) > 1 and depth < 8:
+                    middle = len(fields) // 2
+                    print(f"第 {batch_no} 批响应不完整，拆分为 {middle} + {len(fields) - middle} 个字段重试。")
+                    return (
+                        compare_batch(fields[:middle], batch_no, depth + 1)
+                        + compare_batch(fields[middle:], batch_no, depth + 1)
+                    )
+                raise RuntimeError(f"第 {batch_no} 批审核失败：{exc}") from exc
 
-        response = self.gateway.request_sync(
-            self.provider,
-            request_prompt
-            
-        )
+        for index, fields in enumerate(batches, start=1):
+            all_issues.extend(compare_batch(fields, index))
 
-        response_text = self.extract_response_text(
-            response
-        )
+        deduplicated = []
+        seen = set()
+        for item in all_issues:
+            key = (item.get("字段名称"), item.get("判断结果"),
+                   item.get("信息1最终值"), item.get("信息2合同值"))
+            if key not in seen:
+                seen.add(key)
+                deduplicated.append(item)
 
-        result = self.validate_result(response_text)
+        result = {"问题总数": len(deduplicated), "问题列表": deduplicated}
+        result = self.validate_result(json.dumps(result, ensure_ascii=False))
 
-        print("\n" + "=" * 60)
+        print("\\n" + "=" * 60)
         print("AI 审核结果")
         print("=" * 60)
-
-        print(
-            json.dumps(
-                result,
-                ensure_ascii=False,
-                indent=2,
-                allow_nan=False
-            )
-        )
-
-        print("\n审核完成。")
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+        print("\\n审核完成。")
         return result
 
 
